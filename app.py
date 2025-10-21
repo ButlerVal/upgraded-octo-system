@@ -10,7 +10,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Load models
-cnn_model = load_model("cnn_model.h5", compile=False)
+cnn_model = load_model("cnn_model_fixed.keras")
 efficientnet_model = load_model("efficientnet_model.keras")
 
 # Constants
