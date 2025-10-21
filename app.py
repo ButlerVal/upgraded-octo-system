@@ -10,8 +10,8 @@ import warnings
 warnings.filterwarnings("ignore")
 
 # Load models
-cnn_model = load_model("cnn_model.h5")
-efficientnet_model = load_model("efficientnet_model.h5")
+cnn_model = load_model("cnn_model.keras")
+efficientnet_model = load_model("efficientnet_model.keras")
 
 # Constants
 IMG_SIZE = (96, 96)
