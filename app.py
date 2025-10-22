@@ -2,130 +2,107 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-from keras.models import Sequential, Model
-from keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, GlobalAveragePooling2D, BatchNormalization, Dropout
-from keras.applications import EfficientNetB0
+from keras.models import load_model
 import cv2
 import os
 import warnings
 warnings.filterwarnings("ignore")
 
-# --- 1. Define Model Architectures (from your notebook) ---
-
-def create_cnn_model():
-    """
-    This is the exact CNN architecture from your ISAMANEproject.ipynb file.
-    """
-    model = Sequential()
-    
-    # Keras 3 requires the Input layer to be separate
-    model.add(Input(shape=(96, 96, 3)))
-    
-    model.add(Conv2D(32, (3, 3), activation='relu', padding='same')) # Padding was missing in your notebook but implied by later layers
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Conv2D(64, (3, 3), activation='relu', padding='same'))
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Conv2D(128, (3, 3), activation='relu', padding='same'))
-    model.add(BatchNormalization())
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Flatten())
-    model.add(Dense(512, activation='relu'))
-    model.add(BatchNormalization())
-    model.add(Dropout(0.5))
-    model.add(Dense(1, activation='sigmoid'))
-    
-    return model
-
-def create_efficientnet_model():
-    """
-    This is the exact EfficientNet architecture from your ISAMANEproject.ipynb file.
-    """
-    # Note: Keras 3 uses 'weights=None' when loading local weights.
-    base_model = EfficientNetB0(weights=None, include_top=False, input_shape=(96, 96, 3))
-    
-    x = base_model.output
-    x = GlobalAveragePooling2D()(x)
-    x = Dense(128, activation='relu')(x) # This layer was in your notebook
-    predictions = Dense(1, activation='sigmoid')(x)
-    model = Model(inputs=base_model.input, outputs=predictions)
-    
-    return model
-
-# --- 2. Create Models and Load Weights ---
-
-# This decorator caches the models in memory after loading them once
+# --- 1. Load Models ---
+# This loads your new, error-free .keras models.
+# @st.cache_resource ensures they only load once.
 @st.cache_resource
 def load_all_models():
-    # Create the model architectures
-    cnn_model = create_cnn_model()
-    efficientnet_model = create_efficientnet_model()
-    
-    # Load *only the weights* from your original .h5 files
-    # Make sure you have re-uploaded the ORIGINAL .h5 files
-    cnn_model.load_weights("cnn_model.h5") 
-    efficientnet_model.load_weights("efficientnet_model.h5")
-    
-    return cnn_model, efficientnet_model
+    # Make sure you've uploaded 'cnn_model.keras' and 'efficientnet_model.keras'
+    try:
+        cnn_model = load_model("cnn_model.keras")
+        print("CNN model loaded.")
+    except Exception as e:
+        st.error(f"Error loading cnn_model.keras: {e}")
+        return None, None
+        
+    try:
+        # Use the name you saved, e.g., 'efficientnet_best.keras' or 'efficientnet_model.keras'
+        efficient_model = load_model("efficientnet_model.keras") 
+        print("EfficientNet model loaded.")
+    except Exception as e:
+        st.error(f"Error loading efficientnet_model.keras: {e}")
+        return None, None
+        
+    return cnn_model, efficient_model
 
-# Load models
-cnn_model, efficientnet_model = load_all_models()
+cnn_model, efficient_model = load_all_models()
 
-# --- 3. Rest of your application (No changes needed here) ---
-
-# Constants
+# --- 2. Constants & Helper Functions ---
 IMG_SIZE = (96, 96)
 
-# Basic histopathology feature detection (color, texture, etc.)
+# Helper function to check if the image is a histopathology slide
 def is_histopathology_image(img):
-    # Convert to HSV for better feature analysis
     hsv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2HSV)
-
-    # Check for tissue-like pink/purple range
+    # Check for pink/purple range, typical of H&E staining
     pink_mask = cv2.inRange(hsv, (120, 30, 50), (170, 255, 255))
     pink_ratio = np.sum(pink_mask > 0) / (img.size[0] * img.size[1])
+    return pink_ratio > 0.02 # Threshold, adjustable
 
-    return pink_ratio > 0.02  # Adjustable threshold
+# --- 3. Preprocessing Functions ---
+# We need TWO different preprocessing functions now.
 
-# Image Preprocessing
-def preprocess_image(image):
+def preprocess_image_cnn(image):
+    """Prepares image for the CNN model (scales to 0-1)."""
     image = image.resize(IMG_SIZE)
-    image = np.array(image) / 255.0
-    image = np.expand_dims(image, axis=0)
+    image = np.array(image) / 255.0  # Scale to 0-1
+    image = np.expand_dims(image, axis=0) # Add batch dimension
     return image
 
-# Streamlit UI
-st.set_page_config(page_title="Breast Cancer Detection (Ensemble)", layout="centered", initial_sidebar_state="collapsed")
+def preprocess_image_effnet(image):
+    """Prepares image for the EfficientNet model (keeps 0-255)."""
+    image = image.resize(IMG_SIZE)
+    image = np.array(image)           # No scaling
+    image = np.expand_dims(image, axis=0) # Add batch dimension
+    return image
+
+# --- 4. Streamlit UI ---
+st.set_page_config(page_title="Breast Cancer Detection (Ensemble)", layout="centered")
 st.title("🧬 Histopathology Breast Cancer Classifier (Ensemble)")
 
 uploaded_file = st.file_uploader("📤 Upload Histopathology Image", type=["jpg", "jpeg", "png"])
 
-if uploaded_file:
+if uploaded_file and cnn_model is not None and efficient_model is not None:
     image = Image.open(uploaded_file).convert('RGB')
     st.image(image, caption="🔍 Uploaded Image", use_container_width=True)
 
-    # Check image type
+    # Check if the image is valid
     if not is_histopathology_image(image):
         st.error("🚫 This doesn't look like a histopathology image. Please upload a valid sample.")
     else:
-        # Preprocess and predict
-        processed_img = preprocess_image(image)
-        
-        # We don't need eff_preprocess, your notebook preprocesses both the same way
-        cnn_prob = cnn_model.predict(processed_img)[0][0]
-        eff_prob = efficientnet_model.predict(processed_img)[0][0]
+        # Process image for each model
+        processed_img_cnn = preprocess_image_cnn(image)
+        processed_img_effnet = preprocess_image_effnet(image)
+
+        # Predict with both models
+        cnn_prob = cnn_model.predict(processed_img_cnn)[0][0]
+        eff_prob = efficient_model.predict(processed_img_effnet)[0][0]
 
         # Ensemble average
         ensemble_prob = (cnn_prob + eff_prob) / 2
         label = "Malignant" if ensemble_prob >= 0.5 else "Benign"
 
-        # Results
-        st.success(f"✅ Prediction: **{label}**")
-        st.info(f"**Confidence:** {ensemble_prob*100:.2f}%")
+        # --- Display Results ---
+        st.subheader("🔬 Analysis Complete")
+        
+        if label == "Malignant":
+            st.error(f"Prediction: **{label}**")
+        else:
+            st.success(f"Prediction: **{label}**")
+
+        # Confidence score
+        confidence = ensemble_prob if label == "Malignant" else (1 - ensemble_prob)
+        st.info(f"**Confidence:** {confidence*100:.2f}%")
+
+        # Expander for detailed model outputs
+        with st.expander("Show Individual Model Predictions"):
+            st.write(f"**CNN Model:** {cnn_prob*100:.2f}% Malignant")
+            st.write(f"**EfficientNet Model:** {eff_prob*100:.2f}% Malignant")
+
+else:
+    st.info("Waiting for models to load or for image to be uploaded...")
