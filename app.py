@@ -6,62 +6,81 @@ from keras.models import load_model
 import cv2
 import os
 import warnings
+import requests # For downloading
+
 warnings.filterwarnings("ignore")
 
-# --- 1. Load Models ---
-# This loads your new, error-free .keras models.
-# @st.cache_resource ensures they only load once.
+# --- 1. Define Model URLs and Download Function ---
+
+# !!! IMPORTANT: REPLACE THESE URLS !!!
+# Get your URLs from the "Files" tab in your Hugging Face repo.
+# Click on a file (e.g., cnn_model.keras), then click the "download" button.
+# Copy that URL here.
+# It should look like: https://huggingface.co/YOUR-USERNAME/YOUR-REPO-NAME/resolve/main/cnn_model.keras
+CNN_URL = "https://huggingface.co/Valisces/iasmane/resolve/main/cnn_model.keras"
+EFF_URL = "https://huggingface.co/Valisces/iasmane/resolve/main/efficientnet_model.keras"
+
+# Local file names
+CNN_PATH = "cnn_model.keras"
+EFF_PATH = "efficientnet_model.keras"
+
+# Helper function to download files
+def download_file(url, local_filename):
+    # Check if file already exists
+    if os.path.exists(local_filename):
+        print(f"{local_filename} already exists. Skipping download.")
+        return
+
+    # Download file with a progress bar
+    print(f"Downloading {local_filename}...")
+    with st.spinner(f"Downloading {local_filename}... (This happens once on first boot)"):
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(local_filename, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+    print("Download complete.")
+
+# --- 2. Load Models ---
 @st.cache_resource
 def load_all_models():
-    # Make sure you've uploaded 'cnn_model.keras' and 'efficientnet_model.keras'
-    try:
-        cnn_model = load_model("cnn_model.keras")
-        print("CNN model loaded.")
-    except Exception as e:
-        st.error(f"Error loading cnn_model.keras: {e}")
-        return None, None
-        
-    try:
-        # Use the name you saved, e.g., 'efficientnet_best.keras' or 'efficientnet_model.keras'
-        efficient_model = load_model("efficientnet_model.keras") 
-        print("EfficientNet model loaded.")
-    except Exception as e:
-        st.error(f"Error loading efficientnet_model.keras: {e}")
-        return None, None
-        
+    # Download files from Hugging Face Hub
+    download_file(CNN_URL, CNN_PATH)
+    download_file(EFF_URL, EFF_PATH)
+    
+    # Load models from the files we just downloaded
+    cnn_model = load_model(CNN_PATH)
+    efficient_model = load_model(EFF_PATH)
+    
+    print("Full .keras models loaded successfully.")
     return cnn_model, efficient_model
 
 cnn_model, efficient_model = load_all_models()
 
-# --- 2. Constants & Helper Functions ---
+# --- 3. Constants & Helper Functions ---
 IMG_SIZE = (96, 96)
 
-# Helper function to check if the image is a histopathology slide
 def is_histopathology_image(img):
     hsv = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2HSV)
-    # Check for pink/purple range, typical of H&E staining
     pink_mask = cv2.inRange(hsv, (120, 30, 50), (170, 255, 255))
     pink_ratio = np.sum(pink_mask > 0) / (img.size[0] * img.size[1])
-    return pink_ratio > 0.02 # Threshold, adjustable
+    return pink_ratio > 0.02
 
-# --- 3. Preprocessing Functions ---
-# We need TWO different preprocessing functions now.
-
+# --- 4. Preprocessing Functions ---
 def preprocess_image_cnn(image):
-    """Prepares image for the CNN model (scales to 0-1)."""
     image = image.resize(IMG_SIZE)
-    image = np.array(image) / 255.0  # Scale to 0-1
-    image = np.expand_dims(image, axis=0) # Add batch dimension
+    image = np.array(image) / 255.0
+    image = np.expand_dims(image, axis=0)
     return image
 
 def preprocess_image_effnet(image):
-    """Prepares image for the EfficientNet model (keeps 0-255)."""
     image = image.resize(IMG_SIZE)
-    image = np.array(image)           # No scaling
-    image = np.expand_dims(image, axis=0) # Add batch dimension
+    image = np.array(image)
+    image = tf.keras.applications.efficientnet.preprocess_input(image)
+    image = np.expand_dims(image, axis=0)
     return image
 
-# --- 4. Streamlit UI ---
+# --- 5. Streamlit UI ---
 st.set_page_config(page_title="Breast Cancer Detection (Ensemble)", layout="centered")
 st.title("🧬 Histopathology Breast Cancer Classifier (Ensemble)")
 
@@ -71,38 +90,26 @@ if uploaded_file and cnn_model is not None and efficient_model is not None:
     image = Image.open(uploaded_file).convert('RGB')
     st.image(image, caption="🔍 Uploaded Image", use_container_width=True)
 
-    # Check if the image is valid
     if not is_histopathology_image(image):
         st.error("🚫 This doesn't look like a histopathology image. Please upload a valid sample.")
     else:
-        # Process image for each model
         processed_img_cnn = preprocess_image_cnn(image)
         processed_img_effnet = preprocess_image_effnet(image)
 
-        # Predict with both models
         cnn_prob = cnn_model.predict(processed_img_cnn)[0][0]
         eff_prob = efficient_model.predict(processed_img_effnet)[0][0]
 
-        # Ensemble average
         ensemble_prob = (cnn_prob + eff_prob) / 2
         label = "Malignant" if ensemble_prob >= 0.5 else "Benign"
-
-        # --- Display Results ---
-        st.subheader("🔬 Analysis Complete")
         
         if label == "Malignant":
             st.error(f"Prediction: **{label}**")
         else:
             st.success(f"Prediction: **{label}**")
 
-        # Confidence score
         confidence = ensemble_prob if label == "Malignant" else (1 - ensemble_prob)
         st.info(f"**Confidence:** {confidence*100:.2f}%")
 
-        # Expander for detailed model outputs
         with st.expander("Show Individual Model Predictions"):
             st.write(f"**CNN Model:** {cnn_prob*100:.2f}% Malignant")
             st.write(f"**EfficientNet Model:** {eff_prob*100:.2f}% Malignant")
-
-else:
-    st.info("Waiting for models to load or for image to be uploaded...")
