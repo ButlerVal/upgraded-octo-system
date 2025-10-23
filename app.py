@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 
 # !!! YOUR HUGGING FACE URLS !!!
 CNN_URL = "https://huggingface.co/Valisces/iasmane/resolve/main/cnn_model.keras"
-EFF_URL = "https://huggingface.co/ButlerVal/upgraded-octo-system/resolve/main/efficientnet_model.keras"
+EFF_URL = "https://huggingface.co/Valisces/iasmane/resolve/main/efficientnet_model.keras"
 
 # Local file names
 CNN_PATH = "cnn_model.keras"
