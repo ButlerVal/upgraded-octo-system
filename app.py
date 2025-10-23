@@ -14,11 +14,9 @@ warnings.filterwarnings("ignore")
 
 # --- 1. Define Model URLs and Download Function ---
 
-# !!! YOUR HUGGING FACE URLS !!!
 CNN_URL = "https://huggingface.co/Valisces/iasmane/resolve/main/cnn_model.keras"
 EFF_URL = "https://huggingface.co/Valisces/iasmane/resolve/main/efficientnet_model.keras"
 
-# Local file names
 CNN_PATH = "cnn_model.keras"
 EFF_PATH = "efficientnet_model.keras"
 
@@ -28,58 +26,49 @@ def download_file(url, local_filename):
         return
     
     print(f"Downloading {local_filename}...")
-    with st.spinner(f"Downloading {local_filename}... (This happens once on first boot)"):
-        with requests.get(url, stream=True) as r:
-            r.raise_for_status()
-            with open(local_filename, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+    # This message will show in the Streamlit UI
+    st.info(f"Downloading {local_filename}... (This happens once and may take 5-10 minutes)")
+    
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(local_filename, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
     print("Download complete.")
 
 # --- 2. Define Model Architectures (from your notebook) ---
-# This is the Keras 3-compatible architecture
 
 def create_cnn_model():
     model = Sequential()
     model.add(Input(shape=(96, 96, 3))) # Keras 3 Input layer
-    
     model.add(Conv2D(32, (3, 3), activation='relu', padding='same'))
     model.add(BatchNormalization())
     model.add(MaxPooling2D(pool_size=(2, 2)))
     model.add(Dropout(0.25))
-
     model.add(Conv2D(64, (3, 3), activation='relu', padding='same'))
     model.add(BatchNormalization())
     model.add(MaxPooling2D(pool_size=(2, 2)))
     model.add(Dropout(0.25))
-
     model.add(Conv2D(128, (3, 3), activation='relu', padding='same'))
     model.add(BatchNormalization())
     model.add(MaxPooling2D(pool_size=(2, 2)))
     model.add(Dropout(0.25))
-
     model.add(Flatten())
     model.add(Dense(512, activation='relu'))
     model.add(BatchNormalization())
     model.add(Dropout(0.5))
     model.add(Dense(1, activation='sigmoid'))
-    
     return model
 
 def create_efficientnet_model():
-    # This architecture matches your training notebook
-    # We create the Input layer and pass it to the base_model immediately
     inputs = Input(shape=(96, 96, 3))
     base_model = EfficientNetB0(weights=None, include_top=False, input_tensor=inputs)
     base_model.trainable = False 
-    
-    # We build on top of the base_model's output
     x = base_model.output 
     x = GlobalAveragePooling2D()(x)
     x = Dropout(0.5)(x) 
     outputs = Dense(1, activation='sigmoid')(x)
     model = Model(inputs=inputs, outputs=outputs)
-    
     return model
 
 # --- 3. Load Models (The New Way) ---
@@ -93,15 +82,12 @@ def load_all_models():
     cnn_model = create_cnn_model()
     efficient_model = create_efficientnet_model()
     
-    # Step 3: Load *only the weights* from the downloaded files
-    # This skips the buggy config file entirely
+    # Step 3: Load *only the weights*
     cnn_model.load_weights(CNN_PATH)
     efficient_model.load_weights(EFF_PATH)
     
     print("Models built and weights loaded successfully.")
     return cnn_model, efficient_model
-
-cnn_model, efficient_model = load_all_models()
 
 # --- 4. Constants & Helper Functions ---
 IMG_SIZE = (96, 96)
@@ -126,9 +112,21 @@ def preprocess_image_effnet(image):
     image = np.expand_dims(image, axis=0)
     return image
 
-# --- 6. Streamlit UI ---
+# --- 6. Streamlit UI (Rearranged) ---
 st.set_page_config(page_title="Breast Cancer Detection (Ensemble)", layout="centered")
 st.title("🧬 Histopathology Breast Cancer Classifier (Ensemble)")
+st.write("---")
+
+# --- THIS IS THE NEW PART ---
+# Load models AFTER showing the title.
+# This way, the user sees the download messages.
+with st.spinner("Loading models and booting app..."):
+    cnn_model, efficient_model = load_all_models()
+
+st.success("✅ Models loaded successfully!")
+st.write("---")
+# --- END NEW PART ---
+
 
 uploaded_file = st.file_uploader("📤 Upload Histopathology Image", type=["jpg", "jpeg", "png"])
 
