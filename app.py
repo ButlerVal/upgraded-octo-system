@@ -2,7 +2,9 @@ import streamlit as st
 import numpy as np
 from PIL import Image
 import tensorflow as tf
-from keras.models import load_model
+from keras.models import Sequential, Model
+from keras.layers import Input, Conv2D, MaxPooling2D, Flatten, Dense, GlobalAveragePooling2D, BatchNormalization, Dropout
+from keras.applications import EfficientNetB0
 import cv2
 import os
 import warnings
@@ -11,53 +13,86 @@ import requests # For downloading
 warnings.filterwarnings("ignore")
 
 # --- 1. Define Model URLs and Download Function ---
-
-# !!! IMPORTANT: REPLACE THESE URLS !!!
-# Get your URLs from the "Files" tab in your Hugging Face repo.
-# Click on a file (e.g., cnn_model.keras), then click the "download" button.
-# Copy that URL here.
-# It should look like: https://huggingface.co/YOUR-USERNAME/YOUR-REPO-NAME/resolve/main/cnn_model.keras
+# These are your URLs for the 109MB+ files
 CNN_URL = "https://huggingface.co/Valisces/iasmane/resolve/main/cnn_model.keras"
 EFF_URL = "https://huggingface.co/Valisces/iasmane/resolve/main/efficientnet_model.keras"
 
-# Local file names
 CNN_PATH = "cnn_model.keras"
 EFF_PATH = "efficientnet_model.keras"
 
-# Helper function to download files
 def download_file(url, local_filename):
-    # Check if file already exists
-    if os.path.exists(local_filename):
+    if os.path(local_filename):
         print(f"{local_filename} already exists. Skipping download.")
         return
-
-    # Download file with a progress bar
+    
     print(f"Downloading {local_filename}...")
-    with st.spinner(f"Downloading {local_filename}... (This happens once on first boot)"):
-        with requests.get(url, stream=True) as r:
-            r.raise_for_status()
-            with open(local_filename, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+    # This message will show in the Streamlit UI
+    st.info(f"Downloading model: {local_filename}... (This happens once and may take 5-10 minutes)")
+    
+    with requests.get(url, stream=True) as r:
+        r.raise_for_status()
+        with open(local_filename, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
     print("Download complete.")
 
-# --- 2. Load Models ---
+# --- 2. Define Model Architectures (This is the critical fix) ---
+# We define the Keras 3-compatible architectures here
+
+def create_cnn_model():
+    model = Sequential()
+    model.add(Input(shape=(96, 96, 3)))
+    model.add(Conv2D(32, (3, 3), activation='relu', padding='same'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
+    model.add(Conv2D(64, (3, 3), activation='relu', padding='same'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
+    model.add(Conv2D(128, (3, 3), activation='relu', padding='same'))
+    model.add(BatchNormalization())
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
+    model.add(Flatten())
+    model.add(Dense(512, activation='relu'))
+    model.add(BatchNormalization())
+    model.add(Dropout(0.5))
+    model.add(Dense(1, activation='sigmoid'))
+    return model
+
+def create_efficientnet_model():
+    inputs = Input(shape=(96, 96, 3))
+    base_model = EfficientNetB0(weights=None, include_top=False, input_tensor=inputs)
+    base_model.trainable = False 
+    x = base_model.output 
+    x = GlobalAveragePooling2D()(x)
+    x = Dropout(0.5)(x) 
+    outputs = Dense(1, activation='sigmoid')(x)
+    model = Model(inputs=inputs, outputs=outputs)
+    return model
+
+# --- 3. Load Models ---
+# This is the function that does the slow work
 @st.cache_resource
 def load_all_models():
-    # Download files from Hugging Face Hub
+    # Step 1: Download the files (slow part)
     download_file(CNN_URL, CNN_PATH)
     download_file(EFF_URL, EFF_PATH)
     
-    # Load models from the files we just downloaded
-    cnn_model = load_model(CNN_PATH)
-    efficient_model = load_model(EFF_PATH)
+    # Step 2: Build the clean Keras 3 architectures
+    cnn_model = create_cnn_model()
+    efficient_model = create_efficientnet_model()
     
-    print("Full .keras models loaded successfully.")
+    # Step 3: Load *only the weights* from the downloaded files
+    # This skips the buggy Keras 2 config
+    cnn_model.load_weights(CNN_PATH)
+    efficient_model.load_weights(EFF_PATH)
+    
+    print("Models built and weights loaded successfully.")
     return cnn_model, efficient_model
 
-cnn_model, efficient_model = load_all_models()
-
-# --- 3. Constants & Helper Functions ---
+# --- 4. Constants & Helper Functions ---
 IMG_SIZE = (96, 96)
 
 def is_histopathology_image(img):
@@ -66,7 +101,7 @@ def is_histopathology_image(img):
     pink_ratio = np.sum(pink_mask > 0) / (img.size[0] * img.size[1])
     return pink_ratio > 0.02
 
-# --- 4. Preprocessing Functions ---
+# --- 5. Preprocessing Functions ---
 def preprocess_image_cnn(image):
     image = image.resize(IMG_SIZE)
     image = np.array(image) / 255.0
@@ -80,10 +115,21 @@ def preprocess_image_effnet(image):
     image = np.expand_dims(image, axis=0)
     return image
 
-# --- 5. Streamlit UI ---
+# --- 6. Streamlit UI (Rearranged) ---
+# We draw the UI *FIRST*
 st.set_page_config(page_title="Breast Cancer Detection (Ensemble)", layout="centered")
 st.title("🧬 Histopathology Breast Cancer Classifier (Ensemble)")
+st.write("---")
 
+# *NOW* we call the slow function
+with st.spinner("Initializing app... This may take 5-10 minutes on first load."):
+    cnn_model, efficient_model = load_all_models()
+
+st.success("✅ Models loaded successfully! Ready for upload.")
+st.write("---")
+
+
+# The file uploader will only appear *after* the models are loaded
 uploaded_file = st.file_uploader("📤 Upload Histopathology Image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file and cnn_model is not None and efficient_model is not None:
