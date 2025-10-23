@@ -67,16 +67,18 @@ def create_cnn_model():
     return model
 
 def create_efficientnet_model():
-    # Use the architecture from your *second* EfficientNet model
-    base_model = EfficientNetB0(weights=None, include_top=False, input_shape=(96, 96, 3))
+    # This architecture matches your training notebook
+    # We create the Input layer and pass it to the base_model immediately
+    inputs = Input(shape=(96, 96, 3))
+    base_model = EfficientNetB0(weights=None, include_top=False, input_tensor=inputs)
     base_model.trainable = False 
     
-    inputs = Input(shape=(96, 96, 3))
-    x = base_model(inputs, training=False) 
+    # We build on top of the base_model's output
+    x = base_model.output 
     x = GlobalAveragePooling2D()(x)
-    x = Dropout(0.5)(x) # This was in your second definition
+    x = Dropout(0.5)(x) 
     outputs = Dense(1, activation='sigmoid')(x)
-    model = Model(inputs, outputs)
+    model = Model(inputs=inputs, outputs=outputs)
     
     return model
 
